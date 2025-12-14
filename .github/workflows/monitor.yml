@@ -9,19 +9,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Measure latency
-      id: latency
-      env:
-        URL: 'https://ad.new-programmatic.com/services/nslookup?require-debug-info=body&tid=3835&debug.ccg=235034&debug.ip=79.139.162.4'
-      run: |
-        echo "Measuring latency..."
-        LATENCY=$(curl -s -w "@curl-format.txt" -o /dev/null "$URL")
-        TOTAL_MS=$(echo "$LATENCY" | grep time_total | awk '{print int($2*1000)}')
-        echo "Total latency: $TOTAL_MS ms"
-        
-        echo "latency_ms=$TOTAL_MS" >> $GITHUB_OUTPUT
-        echo "full_timing<<EOF" >> $GITHUB_OUTPUT
-        echo "$LATENCY"
-        echo "EOF" >> $GITHUB_OUTPUT
+  id: latency
+  env:
+    URL: 'https://ad.new-programmatic.com/services/nslookup?require-debug-info=body&tid=3835&debug.ccg=235034&debug.ip=79.139.162.4'
+  run: |
+    TOTAL_MS=$(curl -o /dev/null -s -w "%{time_total}" "$URL" | awk '{print int($1*1000)}')
+    echo "Total latency: $TOTAL_MS ms"
+    echo "latency_ms=$TOTAL_MS" >> $GITHUB_OUTPUT
 
     - name: Send Telegram alert
       if: steps.latency.outputs.latency_ms > 200
