@@ -1,37 +1,49 @@
 name: Latency Monitor
+
 on:
   schedule:
-    - cron: '*/5 * * * *'  # каждые 5 минут
-  workflow_dispatch:  # ручной запуск
+    - cron: '*/5 * * * *'  # запуск каждые 5 минут
+  workflow_dispatch:      # возможность ручного запуска
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
+
     steps:
-    - name: Measure latency
-  id: latency
-  env:
-    URL: 'https://ad.new-programmatic.com/services/nslookup?require-debug-info=body&tid=3835&debug.ccg=235034&debug.ip=79.139.162.4'
-  run: |
-    TOTAL_MS=$(curl -o /dev/null -s -w "%{time_total}" "$URL" | awk '{print int($1*1000)}')
-    echo "Total latency: $TOTAL_MS ms"
-    echo "latency_ms=$TOTAL_MS" >> $GITHUB_OUTPUT
+      - name: Measure latency
+        id: latency
+        env:
+          URL: 'https://ad.new-programmatic.com/services/nslookup?require-debug-info=body&tid=3835&debug.ccg=235034&debug.ip=79.139.162.4'
+        run: |
+          echo "Measuring latency for $URL"
 
-    - name: Send Telegram alert
-      if: steps.latency.outputs.latency_ms > 200
-      env:
-        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      run: |
-        curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_TOKEN/sendMessage" \
-          -H 'Content-Type: application/json' \
-          -d "{
-            \"chat_id\": \"$TELEGRAM_CHAT_ID\",
-            \"text\": \"🚨 Latency Alert!\n⏱️ Response time: ${{ steps.latency.outputs.latency_ms }}ms (>200ms)\n🔗 $URL\",
-            \"parse_mode\": \"HTML\"
-          }"
+          # Получаем общее время запроса в секундах и переводим в миллисекунды
+          TOTAL_MS=$(curl -o /dev/null -s -w "%{time_total}" "$URL" | awk '{print int($1*1000)}')
 
-    - name: Log success
-      if: steps.latency.outputs.latency_ms <= 200
-      run: |
-        echo "✅ Latency OK: ${{ steps.latency.outputs.latency_ms }}ms"
+          echo "Total latency: ${TOTAL_MS} ms"
+
+          # Пишем вывод шага для использования в следующих шагах
+          echo "latency_ms=${TOTAL_MS}" >> "$GITHUB_OUTPUT"
+
+      - name: Send Telegram alert
+        if: ${{ fromJSON(steps.latency.outputs.latency_ms) > 200 }}
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          URL: 'https://ad.new-programmatic.com/services/nslookup?require-debug-info=body&tid=3835&debug.ccg=235034&debug.ip=79.139.162.4'
+        run: |
+          LATENCY=${{ steps.latency.outputs.latency_ms }}
+          echo "Latency too high: ${LATENCY} ms, sending Telegram alert"
+
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+            -H 'Content-Type: application/json' \
+            -d "{
+              \"chat_id\": \"${TELEGRAM_CHAT_ID}\",
+              \"text\": \"🚨 Latency Alert!\n⏱️ Response time: ${LATENCY} ms (>200 ms)\n🔗 ${URL}\",
+              \"parse_mode\": \"HTML\"
+            }"
+
+      - name: Log OK
+        if: ${{ fromJSON(steps.latency.outputs.latency_ms) <= 200 }}
+        run: |
+          echo "✅ Latency OK: ${{ steps.latency.outputs.latency_ms }} ms"
