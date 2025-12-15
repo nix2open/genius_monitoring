@@ -19,9 +19,7 @@ jobs:
 
           measure_once() {
             local t
-            # --max-time 15: общий таймаут 15 секунд на запрос [web:114][web:120]
             t=$(curl -o /dev/null -s -w "%{time_total}" --max-time 15 "$URL" 2>/dev/null || echo "15.000")
-            # переводим в миллисекунды и округляем вниз до int
             echo "$t" | awk '{print int($1*1000)}'
           }
 
@@ -33,7 +31,7 @@ jobs:
           echo "Latency #3: ${LAT3} ms"
 
           SUM=$((LAT1 + LAT2 + LAT3))
-          AVG_MS=$((SUM / 3))  # среднее из трёх замеров [web:119][web:129]
+          AVG_MS=$((SUM / 3))
 
           echo "Average latency: ${AVG_MS} ms"
 
@@ -45,7 +43,6 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Send Telegram alert
-        # 10 секунд = 10000 мс
         if: ${{ fromJSON(steps.latency.outputs.avg_ms) > 10000 }}
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
@@ -59,20 +56,21 @@ jobs:
 
           echo "Average too high (${AVG} ms), sending Telegram alert"
 
-          TEXT="🚨 Latency Alert!
-URL: ${URL}
-Среднее время ответа: ${AVG} ms (> 10000 ms)
-Замеры:
-1) ${LAT1} ms
-2) ${LAT2} ms
-3) ${LAT3} ms"
+          # Собираем текст без кавычек и спецсимволов
+          MSG="🚨 Latency Alert!\n"
+          MSG+="URL: ${URL}\n"
+          MSG+="Среднее время ответа: ${AVG} ms (> 10000 ms)\n"
+          MSG+="Замеры:\n"
+          MSG+="1) ${LAT1} ms\n"
+          MSG+="2) ${LAT2} ms\n"
+          MSG+="3) ${LAT3} ms"
+
+          # Экранируем перевод строки для JSON
+          MSG_ESCAPED=$(printf '%s' "$MSG" | python -c 'import json,sys; print(json.dumps(sys.stdin.read()))')
 
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
             -H 'Content-Type: application/json' \
-            -d "{
-              \"chat_id\": \"${TELEGRAM_CHAT_ID}\",
-              \"text\": \"${TEXT}\"
-            }"
+            -d "{\"chat_id\": \"${TELEGRAM_CHAT_ID}\", \"text\": ${MSG_ESCAPED}}"
 
       - name: Log OK
         if: ${{ fromJSON(steps.latency.outputs.avg_ms) <= 10000 }}
