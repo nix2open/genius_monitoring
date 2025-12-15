@@ -2,48 +2,80 @@ name: Latency Monitor
 
 on:
   schedule:
-    - cron: '*/30 * * * *'  # запуск каждые 30 минут
-  workflow_dispatch:      # возможность ручного запуска
+    - cron: '*/30 * * * *'  # каждые 30 минут
+  workflow_dispatch:
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Measure latency
+      - name: Measure latency 3 times
         id: latency
         env:
           URL: 'https://ad.new-programmatic.com/services/nslookup?require-debug-info=body&tid=3835&debug.ccg=235034&debug.ip=79.139.162.4'
         run: |
-          echo "Measuring latency for $URL"
+          echo "Measuring latency for $URL (3 attempts, timeout 15s each)"
 
-          # Получаем общее время запроса в секундах и переводим в миллисекунды
-          TOTAL_MS=$(curl -o /dev/null -s -w "%{time_total}" "$URL" | awk '{print int($1*1000)}')
+          measure_once() {
+            local t
+            # --max-time 15: общий таймаут 15 секунд на запрос [web:114][web:120]
+            t=$(curl -o /dev/null -s -w "%{time_total}" --max-time 15 "$URL" 2>/dev/null || echo "15.000")
+            # переводим в миллисекунды и округляем вниз до int
+            echo "$t" | awk '{print int($1*1000)}'
+          }
 
-          echo "Total latency: ${TOTAL_MS} ms"
+          LAT1=$(measure_once)
+          echo "Latency #1: ${LAT1} ms"
+          LAT2=$(measure_once)
+          echo "Latency #2: ${LAT2} ms"
+          LAT3=$(measure_once)
+          echo "Latency #3: ${LAT3} ms"
 
-          # Пишем вывод шага для использования в следующих шагах
-          echo "latency_ms=${TOTAL_MS}" >> "$GITHUB_OUTPUT"
+          SUM=$((LAT1 + LAT2 + LAT3))
+          AVG_MS=$((SUM / 3))  # среднее из трёх замеров [web:119][web:129]
+
+          echo "Average latency: ${AVG_MS} ms"
+
+          {
+            echo "lat1=${LAT1}"
+            echo "lat2=${LAT2}"
+            echo "lat3=${LAT3}"
+            echo "avg_ms=${AVG_MS}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Send Telegram alert
-        if: ${{ fromJSON(steps.latency.outputs.latency_ms) > 1000 }}
+        # 10 секунд = 10000 мс
+        if: ${{ fromJSON(steps.latency.outputs.avg_ms) > 10000 }}
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           URL: 'https://ad.new-programmatic.com/services/nslookup?require-debug-info=body&tid=3835&debug.ccg=235034&debug.ip=79.139.162.4'
         run: |
-          LATENCY=${{ steps.latency.outputs.latency_ms }}
-          echo "Latency too high: ${LATENCY} ms, sending Telegram alert"
+          LAT1=${{ steps.latency.outputs.lat1 }}
+          LAT2=${{ steps.latency.outputs.lat2 }}
+          LAT3=${{ steps.latency.outputs.lat3 }}
+          AVG=${{ steps.latency.outputs.avg_ms }}
+
+          echo "Average too high (${AVG} ms), sending Telegram alert"
+
+          TEXT="🚨 Latency Alert!
+URL: ${URL}
+Среднее время ответа: ${AVG} ms (> 10000 ms)
+Замеры:
+1) ${LAT1} ms
+2) ${LAT2} ms
+3) ${LAT3} ms"
 
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
             -H 'Content-Type: application/json' \
             -d "{
               \"chat_id\": \"${TELEGRAM_CHAT_ID}\",
-              \"text\": \"🚨 Latency Alert!\n⏱️ Response time: ${LATENCY} ms (>200 ms)\n🔗 ${URL}\",
-              \"parse_mode\": \"HTML\"
+              \"text\": \"${TEXT}\"
             }"
 
       - name: Log OK
-        if: ${{ fromJSON(steps.latency.outputs.latency_ms) <= 200 }}
+        if: ${{ fromJSON(steps.latency.outputs.avg_ms) <= 10000 }}
         run: |
-          echo "✅ Latency OK: ${{ steps.latency.outputs.latency_ms }} ms"
+          echo "✅ Average latency OK: ${{ steps.latency.outputs.avg_ms }} ms"
+          echo "Values: ${{ steps.latency.outputs.lat1 }} ms, ${{ steps.latency.outputs.lat2 }} ms, ${{ steps.latency.outputs.lat3 }} ms"
