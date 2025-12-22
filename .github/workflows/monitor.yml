@@ -18,24 +18,20 @@ jobs:
           echo "Measuring latency and status for $URL (3 attempts, timeout 15s each)"
 
           measure_once() {
-            # выводим: "<time_total> <http_code>"
-            # --max-time 15: общий таймаут 15 секунд [web:114][web:120]
             local out
+            # time_total и http_code в одной строке, таймаут 15 секунд
             out=$(curl -s -o /dev/null --max-time 15 -w "%{time_total} %{http_code}" "$URL" 2>/dev/null || echo "15.000 000")
             echo "$out"
           }
 
-          # 1-й запрос
           read T1 C1 <<<"$(measure_once)"
           LAT1=$(echo "$T1" | awk '{print int($1*1000)}')
           echo "Try #1: ${LAT1} ms, code ${C1}"
 
-          # 2-й запрос
           read T2 C2 <<<"$(measure_once)"
           LAT2=$(echo "$T2" | awk '{print int($1*1000)}')
           echo "Try #2: ${LAT2} ms, code ${C2}"
 
-          # 3-й запрос
           read T3 C3 <<<"$(measure_once)"
           LAT3=$(echo "$T3" | awk '{print int($1*1000)}')
           echo "Try #3: ${LAT3} ms, code ${C3}"
@@ -55,14 +51,10 @@ jobs:
             echo "avg_ms=${AVG_MS}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Send Telegram alert
-        # Условие:
-        # 1) средняя латентность > 10 000 мс ИЛИ
-        # 2) все три кода ответа >= 500
-        if: ${{ fromJSON(steps.latency.outputs.avg_ms) > 10000
-               || (fromJSON(steps.latency.outputs.code1) >= 500
-                   && fromJSON(steps.latency.outputs.code2) >= 500
-                   && fromJSON(steps.latency.outputs.code3) >= 500) }}
+      # Отправляем алерт, если:
+      # - avg_ms > 10000 ИЛИ
+      # - все три кода >= 500
+      - name: Check and maybe send Telegram alert
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -76,17 +68,35 @@ jobs:
           CODE2=${{ steps.latency.outputs.code2 }}
           CODE3=${{ steps.latency.outputs.code3 }}
 
-          echo "Sending Telegram alert"
+          echo "Checking conditions..."
+          echo "avg_ms=${AVG}, codes=${CODE1},${CODE2},${CODE3}"
 
-          REASON="Высокое среднее время ответа (>10s)."
-          # если все три кода >= 500 — меняем причину на ошибку сервиса
-          if [ "$CODE1" -ge 500 ] && [ "$CODE2" -ge 500 ] && [ "$CODE3" -ge 500 ]; then
-            REASON="Сервис выдает ошибку (HTTP 5xx)."
+          ALERT_REASON=""
+
+          # Среднее время > 10 секунд
+          if [ "$AVG" -gt 10000 ]; then
+            ALERT_REASON="Высокое среднее время ответа (>10s)."
           fi
+
+          # Все три кода 5xx
+          if [ "$CODE1" -ge 500 ] && [ "$CODE2" -ge 500 ] && [ "$CODE3" -ge 500 ]; then
+            if [ -n "$ALERT_REASON" ]; then
+              ALERT_REASON="${ALERT_REASON} Сервис выдает ошибку (HTTP 5xx)."
+            else
+              ALERT_REASON="Сервис выдает ошибку (HTTP 5xx)."
+            fi
+          fi
+
+          if [ -z "$ALERT_REASON" ]; then
+            echo "✅ OK, no alert."
+            exit 0
+          fi
+
+          echo "Sending Telegram alert: $ALERT_REASON"
 
           MSG="🚨 Alert!
 URL: ${URL}
-Причина: ${REASON}
+Причина: ${ALERT_REASON}
 Среднее время ответа: ${AVG} ms
 Замеры:
 1) ${LAT1} ms, код ${CODE1}
@@ -94,18 +104,8 @@ URL: ${URL}
 3) ${LAT3} ms, код ${CODE3}
 "
 
-          # Экранируем текст в корректный JSON
           MSG_ESCAPED=$(printf '%s' "$MSG" | python -c 'import json,sys; print(json.dumps(sys.stdin.read()))')
 
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
             -H 'Content-Type: application/json' \
             -d "{\"chat_id\": \"${TELEGRAM_CHAT_ID}\", \"text\": ${MSG_ESCAPED}}"
-
-      - name: Log OK
-        if: ${{ fromJSON(steps.latency.outputs.avg_ms) <= 10000
-               && !(fromJSON(steps.latency.outputs.code1) >= 500
-                    && fromJSON(steps.latency.outputs.code2) >= 500
-                    && fromJSON(steps.latency.outputs.code3) >= 500) }}
-        run: |
-          echo "✅ OK: avg=${{ steps.latency.outputs.avg_ms }} ms"
-          echo "Values: ${{ steps.latency.outputs.lat1 }} ms (code ${{ steps.latency.outputs.code1 }}), ${{ steps.latency.outputs.lat2 }} ms (code ${{ steps.latency.outputs.code2 }}), ${{ steps.latency.outputs.lat3 }} ms (code ${{ steps.latency.outputs.code3 }})"
