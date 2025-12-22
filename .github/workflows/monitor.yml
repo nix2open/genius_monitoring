@@ -94,16 +94,16 @@ jobs:
 
           echo "Sending Telegram alert: $ALERT_REASON"
 
-          MSG="🚨 Alert!
-URL: ${URL}
-Причина: ${ALERT_REASON}
-Среднее время ответа: ${AVG} ms
-Замеры:
-1) ${LAT1} ms, код ${CODE1}
-2) ${LAT2} ms, код ${CODE2}
-3) ${LAT3} ms, код ${CODE3}
-"
+                   # Собираем текст сообщения
+          MSG="🚨 Latency Alert!\n"
+          MSG+="URL: ${URL}\n"
+          MSG+="Среднее время ответа: ${AVG} ms (> 10000 ms)\n"
+          MSG+="Замеры:\n"
+          MSG+="1) ${LAT1} ms, код ${CODE1}\n"
+          MSG+="2) ${LAT2} ms, код ${CODE2}\n"
+          MSG+="3) ${LAT3} ms, код ${CODE3}"
 
+          # Экранируем текст в корректный JSON
           MSG_ESCAPED=$(printf '%s' "$MSG" | python -c 'import json,sys; print(json.dumps(sys.stdin.read()))')
 
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
