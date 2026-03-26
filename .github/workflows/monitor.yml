@@ -13,7 +13,7 @@ jobs:
       - name: Measure latency 3 times
         id: latency
         env:
-          URL: 'https://ad.new-programmatic.com/services/nslookup?require-debug-info=body&tid=3835&debug.ccg=235034&debug.ip=79.139.162.4'
+          URL: 'https://ad.new-programmatic.com/services/nslookup?require-debug-info=body&tid=3835'
         run: |
           echo "Measuring latency and status for $URL (3 attempts, timeout 15s each)"
 
