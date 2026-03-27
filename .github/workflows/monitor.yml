@@ -58,7 +58,7 @@ jobs:
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          URL: 'https://ad.new-programmatic.com/services/nslookup?require-debug-info=body&tid=3835&debug.ccg=235034&debug.ip=79.139.162.4'
+          URL: 'https://ad.new-programmatic.com/services/nslookup?require-debug-info=body&tid=3835'
         run: |
           LAT1=${{ steps.latency.outputs.lat1 }}
           LAT2=${{ steps.latency.outputs.lat2 }}
