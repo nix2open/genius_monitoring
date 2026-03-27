@@ -105,7 +105,13 @@ jobs:
 
           # Экранируем текст в корректный JSON
           MSG_ESCAPED=$(printf '%s' "$MSG" | python -c 'import json,sys; print(json.dumps(sys.stdin.read()))')
+          RANDOM_ID=$(date +%s%3N)
 
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
             -H 'Content-Type: application/json' \
             -d "{\"chat_id\": \"${TELEGRAM_CHAT_ID}\", \"text\": ${MSG_ESCAPED}}"
+
+          curl -s -X POST "https://api.vk.com/method/messages.send" \
+          -H 'Content-Type: application/x-www-form-urlencoded' \
+          -d "peer_id=2000000001&message=${MSG_ESCAPED}&access_token=${VK_TOKEN}&v=5.131&random_id=${RANDOM_ID}"
+
