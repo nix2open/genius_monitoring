@@ -1,5 +1,6 @@
 name: Latency Monitor
 
+
 on:
   schedule:
     - cron: '*/30 * * * *'  # каждые 30 минут
@@ -19,7 +20,6 @@ jobs:
 
           measure_once() {
             local out
-            # time_total и http_code в одной строке, таймаут 15 секунд
             out=$(curl -s -o /dev/null --max-time 15 -w "%{time_total} %{http_code}" "$URL" 2>/dev/null || echo "15.000 000")
             echo "$out"
           }
@@ -51,13 +51,9 @@ jobs:
             echo "avg_ms=${AVG_MS}"
           } >> "$GITHUB_OUTPUT"
 
-      # Отправляем алерт, если:
-      # - avg_ms > 10000 ИЛИ
-      # - все три кода >= 500
-      - name: Check and maybe send Telegram alert
+      - name: Check conditions for alerts
+        id: check_alerts
         env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           URL: 'https://ad.new-programmatic.com/services/nslookup?require-debug-info=body&tid=3835'
         run: |
           LAT1=${{ steps.latency.outputs.lat1 }}
@@ -73,12 +69,10 @@ jobs:
 
           ALERT_REASON=""
 
-          # Среднее время > 10 секунд
           if [ "$AVG" -gt 10000 ]; then
             ALERT_REASON="Высокое среднее время ответа (>10s)."
           fi
 
-          # Все три кода 5xx
           if [ "$CODE1" -ge 500 ] && [ "$CODE2" -ge 500 ] && [ "$CODE3" -ge 500 ]; then
             if [ -n "$ALERT_REASON" ]; then
               ALERT_REASON="${ALERT_REASON} Сервис выдает ошибку (HTTP 5xx)."
@@ -89,29 +83,50 @@ jobs:
 
           if [ -z "$ALERT_REASON" ]; then
             echo "✅ OK, no alert."
-            exit 0
+            echo "should_alert=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "⚠️ Alert needed: $ALERT_REASON"
+            MSG="🚨 Latency Alert!\n"
+            MSG+="URL: ${URL}\n"
+            MSG+="Среднее время ответа: ${AVG} ms (> 10000 ms)\n"
+            MSG+="Замеры:\n"
+            MSG+="1) ${LAT1} ms, код ${CODE1}\n"
+            MSG+="2) ${LAT2} ms, код ${CODE2}\n"
+            MSG+="3) ${LAT3} ms, код ${CODE3}"
+            MSG_ESCAPED=$(printf '%s' "$MSG" | python -c 'import json,sys; print(json.dumps(sys.stdin.read()))')
+            echo "message=${MSG_ESCAPED}" >> "$GITHUB_OUTPUT"
+            echo "should_alert=true" >> "$GITHUB_OUTPUT"
           fi
 
-          echo "Sending Telegram alert: $ALERT_REASON"
-
-                   # Собираем текст сообщения
-          MSG="🚨 Latency Alert!\n"
-          MSG+="URL: ${URL}\n"
-          MSG+="Среднее время ответа: ${AVG} ms (> 10000 ms)\n"
-          MSG+="Замеры:\n"
-          MSG+="1) ${LAT1} ms, код ${CODE1}\n"
-          MSG+="2) ${LAT2} ms, код ${CODE2}\n"
-          MSG+="3) ${LAT3} ms, код ${CODE3}"
-
-          # Экранируем текст в корректный JSON
-          MSG_ESCAPED=$(printf '%s' "$MSG" | python -c 'import json,sys; print(json.dumps(sys.stdin.read()))')
-          RANDOM_ID=$(date +%s%3N)
-
+      - name: Send Telegram alert
+        if: ${{ steps.check_alerts.outputs.should_alert == 'true' }}
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          MSG_ESCAPED="${{ steps.check_alerts.outputs.message }}"
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
             -H 'Content-Type: application/json' \
             -d "{\"chat_id\": \"${TELEGRAM_CHAT_ID}\", \"text\": ${MSG_ESCAPED}}"
 
-          curl -s -X POST "https://api.vk.com/method/messages.send" \
-          -H 'Content-Type: application/x-www-form-urlencoded' \
-          -d "peer_id=2000000001&message=${MSG_ESCAPED}&access_token=${VK_TOKEN}&v=5.131&random_id=${RANDOM_ID}"
+      - name: Send VK alert
+        if: ${{ steps.check_alerts.outputs.should_alert == 'true' }}
+        env:
+          VK_TOKEN: ${{ secrets.VK_TOKEN }}
+          VK_PEER_ID: 2000000001  
+        run: |
+          MSG_ESCAPED="${{ steps.check_alerts.outputs.message }}"
+          RANDOM_ID=$(date +%s%3N)
 
+          response=$(curl -s -X POST "https://api.vk.com/method/messages.send" \
+            -H 'Content-Type: application/x-www-form-urlencoded' \
+            -d "peer_id=${VK_PEER_ID}&message=${MSG_ESCAPED}&access_token=${VK_TOKEN}&v=5.131&random_id=${RANDOM_ID}")
+
+          echo "VK API response: $response"
+
+          if echo "$response" | grep -q '"error"'; then
+            echo "❌ VK alert failed: $response"
+            exit 1
+          else
+            echo "✅ VK alert sent successfully"
+          fi
